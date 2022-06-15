@@ -1,6 +1,7 @@
-import os
 import typing as t
 from warnings import warn
+
+from werkzeug.serving import is_running_from_reloader
 
 from .app import Flask
 from .blueprints import Blueprint
@@ -162,7 +163,7 @@ def explain_template_loading_attempts(app: Flask, template, attempts) -> None:
 
 
 def explain_ignored_app_run() -> None:
-    if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+    if not is_running_from_reloader():
         warn(
             Warning(
                 "Silently ignoring app.run() because the application is"

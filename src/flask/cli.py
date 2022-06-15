@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import ast
 import inspect
 import os
@@ -5,6 +7,7 @@ import platform
 import re
 import sys
 import traceback
+import typing as t
 from functools import update_wrapper
 from operator import attrgetter
 from threading import Lock
@@ -17,6 +20,9 @@ from .globals import current_app
 from .helpers import get_debug_flag
 from .helpers import get_env
 from .helpers import get_load_dotenv
+
+if t.TYPE_CHECKING:
+    from flask.app import Flask
 
 
 class NoAppException(click.UsageError):
@@ -336,19 +342,24 @@ class ScriptInfo:
     onwards as click object.
     """
 
-    def __init__(self, app_import_path=None, create_app=None, set_debug_flag=True):
+    def __init__(
+        self,
+        app_import_path: str | None = None,
+        create_app: t.Callable[..., Flask] = None,
+        set_debug_flag: bool = True,
+    ) -> None:
         #: Optionally the import path for the Flask application.
-        self.app_import_path = app_import_path or os.environ.get("FLASK_APP")
+        self.app_import_path = app_import_path
         #: Optionally a function that is passed the script info to create
         #: the instance of the application.
         self.create_app = create_app
         #: A dictionary with arbitrary data that can be associated with
         #: this script info.
-        self.data = {}
+        self.data: dict[t.Any, t.Any] = {}
         self.set_debug_flag = set_debug_flag
-        self._loaded_app = None
+        self._loaded_app: Flask | None = None
 
-    def load_app(self):
+    def load_app(self) -> Flask:
         """Loads the Flask app (if not yet loaded) and returns it.  Calling
         this multiple times will just result in the already loaded app to
         be returned.
@@ -403,8 +414,11 @@ def with_appcontext(f):
 
     @click.pass_context
     def decorator(__ctx, *args, **kwargs):
-        with __ctx.ensure_object(ScriptInfo).load_app().app_context():
-            return __ctx.invoke(f, *args, **kwargs)
+        if not current_app:
+            app = __ctx.ensure_object(ScriptInfo).load_app()
+            __ctx.with_resource(app.app_context())
+
+        return __ctx.invoke(f, *args, **kwargs)
 
     return update_wrapper(decorator, f)
 
@@ -474,10 +488,28 @@ class FlaskGroup(AppGroup):
     ):
         params = list(extra.pop("params", None) or ())
 
+        params.append(
+            click.Option(
+                ["--app", "app_import_path"],
+                metavar="IMPORT",
+                help="Import string for a Flask app object or factory function.",
+            )
+        )
+        params.append(
+            click.Option(
+                ["--env"],
+                metavar="ENV",
+                help="Execution environment name.",
+                default="production",
+                show_default=True,
+            )
+        )
+
         if add_version_option:
             params.append(version_option)
 
-        AppGroup.__init__(self, params=params, **extra)
+        super().__init__(params=params, **extra)
+
         self.create_app = create_app
         self.load_dotenv = load_dotenv
         self.set_debug_flag = set_debug_flag
@@ -546,23 +578,9 @@ class FlaskGroup(AppGroup):
         return sorted(rv)
 
     def main(self, *args, **kwargs):
-        # Set a global flag that indicates that we were invoked from the
-        # command line interface. This is detected by Flask.run to make the
-        # call into a no-op. This is necessary to avoid ugly errors when the
-        # script that is loaded here also attempts to start a server.
-        os.environ["FLASK_RUN_FROM_CLI"] = "true"
-
         if get_load_dotenv(self.load_dotenv):
             load_dotenv()
 
-        obj = kwargs.get("obj")
-
-        if obj is None:
-            obj = ScriptInfo(
-                create_app=self.create_app, set_debug_flag=self.set_debug_flag
-            )
-
-        kwargs["obj"] = obj
         kwargs.setdefault("auto_envvar_prefix", "FLASK")
         return super().main(*args, **kwargs)
 
@@ -836,6 +854,10 @@ def run_command(
     The reloader and debugger are enabled by default if
     FLASK_ENV=development or FLASK_DEBUG=1.
     """
+    # Record that the run command was invoked from the CLI, so that
+    # calling Flask.run won't also start a server.
+    os.environ["FLASK_RUN_FROM_CLI"] = "true"
+
     debug = get_debug_flag()
 
     if reload is None:

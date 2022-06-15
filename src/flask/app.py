@@ -10,6 +10,7 @@ from itertools import chain
 from threading import Lock
 from types import TracebackType
 
+import click
 from werkzeug.datastructures import Headers
 from werkzeug.datastructures import ImmutableDict
 from werkzeug.exceptions import Aborter
@@ -908,9 +909,11 @@ class Flask(Scaffold):
             The default port is now picked from the ``SERVER_NAME``
             variable.
         """
-        # Change this into a no-op if the server is invoked from the
-        # command line. Have a look at cli.py for more information.
-        if os.environ.get("FLASK_RUN_FROM_CLI") == "true":
+        # Change this into a no-op if the default 'flask run' is being
+        # executed, as it will start the server itself.
+        ctx = click.get_current_context(silent=True)
+
+        if ctx is not None and ctx.command is cli.run_command:
             from .debughelpers import explain_ignored_app_run
 
             explain_ignored_app_run()
