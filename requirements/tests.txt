@@ -29,3 +29,4 @@ python-dotenv==0.20.0
     # via -r requirements/tests.in
 tomli==2.0.1
     # via pytest
+zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability
